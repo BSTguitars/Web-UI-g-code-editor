@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>G-code Multi Replace with Cumulative Highlight</title>
+  <style>
+    body { font-family: monospace, monospace; margin: 1em; }
+    .controls {
+      margin-bottom: 1em;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 1em;
+    }
+    label { font-weight: bold; }
+    input[type="text"] { width: 80px; font-family: monospace; }
+    button { padding: 5px 10px; cursor: pointer; }
+    #dropzone {
+      border: 2px dashed #888;
+      padding: 1em;
+      text-align: center;
+      margin-top: 1em;
+      background: #f8f8f8;
+      cursor: pointer;
+    }
+    #dropzone.hover {
+      background: #e0ffe0;
+      border-color: green;
+    }
+    .flex {
+      display: flex;
+      gap: 1em;
+    }
+    .half {
+      width: 50%;
+      height: 400px;
+      overflow: auto;
+      border: 1px solid #ccc;
+      padding: 0.5em;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #fff;
+      box-sizing: border-box;
+    }
+    .highlight-green {
+      background-color: #c8facc;
+    }
+    .highlight-red {
+      background-color: #f8c8c8;
+    }
+  </style>
+</head>
+<body>
+
+<h1>🛠 G-code Multi Replace with Cumulative Highlight</h1>
+
+<div class="controls">
+  <label for="fileInput">📁 Open File:</label>
+  <input type="file" id="fileInput" />
+
+  <label>Replace:
+    <input type="text" id="findText" placeholder="Find" />
+  </label>
+
+  <label>With:
+    <input type="text" id="replaceText" placeholder="Replace" />
+  </label>
+
+  <button id="applyBtn">Apply</button>
+  <button id="saveBtn">💾 Save Modified</button>
+  <button id="resetBtn">🔄 Reset</button>
+</div>
+
+<div class="flex">
+  <pre id="original" class="half" aria-label="Original G-code" tabindex="0"></pre>
+  <pre id="modified" class="half" aria-label="Modified G-code" tabindex="0"></pre>
+</div>
+
+<div id="dropzone">⬇️ Drag & drop your G-code file here</div>
+
+<script>
+  let originalContent = "";
+  let modifiedContent = "";
+  let changes = []; // {find, replace}
+
+  const originalElem = document.getElementById("original");
+  const modifiedElem = document.getElementById("modified");
+  const findInput = document.getElementById("findText");
+  const replaceInput = document.getElementById("replaceText");
+  const applyBtn = document.getElementById("applyBtn");
+  const saveBtn = document.getElementById("saveBtn");
+  const resetBtn = document.getElementById("resetBtn");
+  const dropzone = document.getElementById("dropzone");
+  const fileInput = document.getElementById("fileInput");
+
+  function escapeHtml(text) {
+    return text.replace(/[&<>"']/g, function(m) {
+      return ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      })[m];
+    });
+  }
+
+  // Highlight whole word matches in text for given find strings (green or red)
+  // highlightClass is "highlight-green" or "highlight-red"
+  // Supports multiple find strings (array)
+  function highlightMatches(text, findArr, highlightClass) {
+    if (!findArr || findArr.length === 0) return escapeHtml(text);
+
+    // Escape and join all find terms for regex
+    const escapedFinds = findArr.map(f => f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    // Create a regex to match any of the find terms with word boundaries
+    const regex = new RegExp(`\\b(${escapedFinds.join('|')})\\b`, 'g');
+
+    return escapeHtml(text).replace(regex, match => `<span class="${highlightClass}">${match}</span>`);
+  }
+
+  // Display original with green highlights for all replaced terms (cumulative)
+  function displayOriginal() {
+    if (changes.length === 0) {
+      originalElem.innerHTML = escapeHtml(originalContent);
+    } else {
+      const allFinds = changes.map(c => c.find);
+      originalElem.innerHTML = highlightMatches(originalContent, allFinds, "highlight-green");
+    }
+  }
+
+  // Display modified with red highlights for all replaced terms
+  function displayModified() {
+    if (!modifiedContent) {
+      modifiedElem.innerHTML = "";
+      return;
+    }
+    const allFinds = changes.map(c => c.find);
+    modifiedElem.innerHTML = highlightMatches(modifiedContent, allFinds, "highlight-red");
+  }
+
+  // Apply all replacements in order to original content, returns string
+  function applyAllReplacements() {
+    let text = originalContent;
+    changes.forEach(({find, replace}) => {
+      const escapedFind = find.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`\\b${escapedFind}\\b`, 'g');
+      text = text.replace(regex, replace);
+    });
+    return text;
+  }
+
+  // When user applies a new replacement
+  applyBtn.addEventListener('click', () => {
+    const findVal = findInput.value.trim();
+    const replaceVal = replaceInput.value;
+
+    if (!findVal) {
+      alert("Please enter text to find.");
+      return;
+    }
+
+    // Check if this find was already applied
+    if (changes.some(c => c.find === findVal)) {
+      if(!confirm(`The find term "${findVal}" was already applied. Apply again?`)) return;
+    }
+
+    changes.push({find: findVal, replace: replaceVal});
+    modifiedContent = applyAllReplacements();
+
+    displayOriginal();
+    displayModified();
+
+    findInput.value = "";
+    replaceInput.value = "";
+    findInput.focus();
+  });
+
+  // Save modified content as text file with user-defined filename
+  saveBtn.addEventListener('click', () => {
+    if (!modifiedContent) {
+      alert("No modified content to save.");
+      return;
+    }
+
+    const defaultFilename = 'modified_gcode.txt';
+    const userFilename = prompt("Enter filename to save as:", defaultFilename);
+    if (!userFilename) {
+      alert("Filename is required.");
+      return;
+    }
+
+    const blob = new Blob([modifiedContent], {type: 'text/plain'});
+    const link = document.createElement('a');
+    link.download = userFilename;
+    link.href = URL.createObjectURL(blob);
+    link.click();
+  });
+
+  // Reset all to original state
+  resetBtn.addEventListener('click', () => {
+    if (!confirm("Are you sure you want to reset all changes?")) return;
+
+    changes = [];
+    modifiedContent = originalContent;
+    displayOriginal();
+    displayModified();
+
+    findInput.value = "";
+    replaceInput.value = "";
+  });
+
+  // Load file content into original and modified panes
+  function loadFileContent(content) {
+    originalContent = content;
+    modifiedContent = content;
+    changes = [];
+    displayOriginal();
+    displayModified();
+    findInput.value = "";
+    replaceInput.value = "";
+  }
+
+  // File input handler
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => loadFileContent(event.target.result);
+    reader.readAsText(file);
+  });
+
+  // Drag & drop handlers
+  dropzone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropzone.classList.add('hover');
+  });
+
+  dropzone.addEventListener('dragleave', (e) => {
+    dropzone.classList.remove('hover');
+  });
+
+  dropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropzone.classList.remove('hover');
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => loadFileContent(event.target.result);
+    reader.readAsText(file);
+  });
+</script>
+
+</body>
+</html>
